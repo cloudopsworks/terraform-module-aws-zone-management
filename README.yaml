@@ -1,4 +1,4 @@
-name: Terraform Transit Gateway Module
+name: Terraform Zone Management Module
 #logo: logo/logo.jpg
 
 license: "APACHE2"
@@ -8,23 +8,162 @@ copyrights:
     url: "https://cloudops.works"
     year: "2024"
 
-github_repo: cloudopsworks/terraform-module-aws-zone-management
+github_repo: cloudopsworks/terraform-module-zone-management
 
 description: |-
-  VPC Module for setting up transit gateway with ResourceAccessMananger support.
+  Bootstrap and manage per-zone IaC repositories for your products using a standardized
+  Terragrunt project template. This module creates a GitHub repository named
+  "${product_name}-iac-zone-${zone_name}" based on the
+  cloudopsworks/terragrunt-project-template, so every environment (dev, stage, prod, etc.)
+  starts with a ready-to-use, consistent structure.
 
 # Introduction to the project
-#introduction: |-
-#  This is an introduction.
+introduction: |-
+  Modern teams typically separate their infrastructure-as-code (IaC) into logical "zones"
+  like dev, stage, and prod. Each zone often needs its own repository with a familiar
+  layout, CI defaults, and guardrails.
+
+  This module standardizes that bootstrap step by creating a new GitHub repository from
+  the Cloud Ops Works Terragrunt project template. It encodes a consistent naming
+  convention — "${product_name}-iac-zone-${zone_name}" — and exposes a minimal set of
+  inputs to keep things simple and repeatable.
+
+  Under the hood it uses the official GitHub Terraform provider and the template repository
+  to create a private repo that you can immediately start using with Terragrunt.
 
 # How to use this project
-#usage: |-
+usage: |-
+  Requirements
+  - Terraform >= 1.3
+  - Provider: integrations/github ~> 5.30
+  - Authentication: export GITHUB_TOKEN with a token that can create repositories in your org
+  - Organization: set GITHUB_OWNER or configure provider "github" with an explicit owner
+
+  Provider configuration (one option)
+  You can let the provider read the token from the environment and specify the owner via
+  a generated provider block (Terragrunt) or plain Terraform provider configuration.
+
+  Example Terraform usage
+  ```hcl
+  terraform {
+    required_version = ">= 1.3"
+    required_providers {
+      github = {
+        source  = "integrations/github"
+        version = "~> 5.30"
+      }
+    }
+  }
+
+  provider "github" {
+    # Alternatively, set env var GITHUB_OWNER
+    owner = "your-github-org"
+  }
+
+  module "zone_repo" {
+    source = "git::https://github.com/cloudopsworks/terraform-module-zone-management.git//?ref=v0.1.0"
+
+    product_name = "acme"
+    zone_name    = "prod"
+    description  = "Acme Production IaC Zone"
+
+    # Optional
+    tags       = { team = "platform" }
+    extra_tags = { env = "prod" }
+  }
+  ```
+
+  Complete Inputs Reference
+  - product_name (string, required): Short product/platform identifier used in the repo name.
+  - zone_name (string, required): Zone/environment name (e.g., dev, stage, prod, shared).
+  - description (string, optional, default ""): Repository description in GitHub.
+  - tags (map(string), optional, default {}): Generic tags map. Reserved for future use.
+  - extra_tags (map(string), optional, default {}): Additional tags map. Reserved for future use.
+
+  Outputs
+  - full_name: The "owner/name" of the created repository.
+  - git_clone_url: The git:// clone URL.
+  - http_clone_url: The https:// clone URL.
+  - html_url: The repository HTML URL.
 
 # Example usage
-#examples: |-
+examples: |-
+  Boilerplate templates
+  We provide minimal Terragrunt boilerplate to get you started quickly in the `.boilerplate`
+  folder of this repository. Copy and adapt them to your project structure.
+
+  1) Root Terragrunt (organization-wide defaults)
+  File: .boilerplate/terragrunt-root.hcl
+  ```hcl
+  terragruntVersion = ">= 0.53.0"
+
+  locals {
+    github_owner  = get_env("GITHUB_OWNER", "your-github-org")
+    module_ref    = get_env("ZONE_MGMT_MODULE_REF", "v0.1.0")
+    module_source = "git::https://github.com/cloudopsworks/terraform-module-zone-management.git//?ref=${local.module_ref}"
+  }
+
+  generate "provider_github" {
+    path      = "provider.github.tf"
+    if_exists = "overwrite_terragrunt"
+    contents  = <<EOF
+  provider "github" {
+    owner = "${local.github_owner}"
+  }
+  EOF
+  }
+  ```
+
+  2) Per-zone Terragrunt
+  File: .boilerplate/terragrunt-zone.hcl
+  ```hcl
+  locals {
+    root_cfg      = read_terragrunt_config(find_in_parent_folders())
+    module_source = local.root_cfg.locals.module_source
+  }
+
+  terraform {
+    source = local.module_source
+  }
+
+  inputs = {
+    product_name = "acme"
+    zone_name    = "prod"
+    description  = "Acme Production IaC Zone"
+
+    tags       = { team = "platform" }
+    extra_tags = { env = "prod" }
+  }
+  ```
+
+  3) Minimal Terragrunt tree
+  ```text
+  live/
+  ├── terragrunt.hcl              # copy from .boilerplate/terragrunt-root.hcl
+  └── prod/
+      └── zone/
+          └── terragrunt.hcl      # copy from .boilerplate/terragrunt-zone.hcl
+  ```
+
+  4) Basic Terraform-only example (without Terragrunt)
+  See the "Example Terraform usage" in the Usage section above.
 
 # How to get started quickly
-#quickstart: |-
+quickstart: |-
+  1) Ensure you have a GitHub token with repo creation rights and export it:
+     - export GITHUB_TOKEN=...  (or configure a GitHub App auth as per provider docs)
+  2) Set your organization owner so repos are created in the right place:
+     - export GITHUB_OWNER=your-github-org
+  3) Choose your product and zone names, e.g. product_name=acme, zone_name=dev
+  4) Pick one of the approaches:
+     - Terragrunt: copy `.boilerplate/terragrunt-root.hcl` to the root of your live repo,
+       then `.boilerplate/terragrunt-zone.hcl` into live/<zone>/zone/ and adjust inputs.
+     - Terraform only: use the module block shown in the Usage section.
+  5) Initialize and apply:
+     - terragrunt run-all init && terragrunt run-all apply
+       or
+     - terraform init && terraform apply
+  6) Verify outputs and visit the created repository URL.
 
 include:
   - "docs/targets.md"
